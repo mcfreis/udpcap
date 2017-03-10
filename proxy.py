@@ -75,10 +75,10 @@ def proxy(proxyPort, serverHost, serverPort):
     try:
         proxy.bind(('', int(proxyPort)))
     except:
-        sys.stderr.write('Failed to bind on port %s\n' % str(proxyPort))
+        sys.stderr.write('### Failed to bind on port %s\n' % str(proxyPort))
         sys.exit(1)
 
-    sys.stdout.write('Ready.\n')
+    sys.stdout.write('### Ready.\n')
 
     serveraddr = (serverHost, int(serverPort))
     allsockets = [proxy]
@@ -100,7 +100,7 @@ def proxy(proxyPort, serverHost, serverPort):
 
                 # client -> ( proxy --> ) server
                 if s == proxy:
-                    # sys.stdout.write("client %s -> proxy --> server: %s\n" % (remoteaddr, data))
+                    sys.stdout.write("    client %s -> proxy --> server: %r\n" % (remoteaddr, str(data)[:20]))
                     try:
                         # find proxy sock
                         p = proxysocks[remoteaddr]
@@ -126,7 +126,7 @@ def proxy(proxyPort, serverHost, serverPort):
                     bytes_sent = proxy.sendto(data, origins[localaddr])
                     # add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
                     add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], serveraddr, data)
-                    # sys.stdout.write("server -> proxy --> client %s: %s\n" % (origins[localaddr], data[:bytes_sent]))
+                    sys.stdout.write("    server -> proxy --> client %s: %r\n" % (origins[localaddr], str(data[:bytes_sent])[:20]))
 
 
 def proxy_loop(pp, sh, sp):
@@ -134,7 +134,7 @@ def proxy_loop(pp, sh, sp):
         try:
             proxy(pp, sh, sp)
         except Exception as e:
-            raise
+            sys.stdout.write('### Restarting.\n')
 
 if __name__ == '__main__':
     try:
