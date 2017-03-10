@@ -6,6 +6,9 @@ import sys
 import datetime
 import struct
 import time
+import os
+
+PCAP_FILE = 'file.pcap'
 
 
 def pcap_write_global_header(_fd):
@@ -34,8 +37,8 @@ def pcap_write_entry(_fd, timestamp, dest, src, _dtg):
                      128,  # TTL
                      17,  # Protocol (UDP)
                      0,  # Checksum
-                     struct.unpack("!I", socket.inet_aton(src[0]))[0],
-                     struct.unpack("!I", socket.inet_aton(dest[0]))[0],
+                     struct.unpack("!I", socket.inet_aton(socket.gethostbyname(src[0])))[0],
+                     struct.unpack("!I", socket.inet_aton(socket.gethostbyname(dest[0])))[0],
                      )
 
     frame = struct.pack("!H",
@@ -54,68 +57,89 @@ def pcap_write_entry(_fd, timestamp, dest, src, _dtg):
     _fd.write(binStr)
     _fd.flush()
 
-try:
-    proxyPort, serverHost, serverPort = sys.argv[1].split(':')
-except:
-    proxyPort, serverHost, serverPort = 4710, '127.0.0.1', 4711
 
-proxy = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-try:
-    proxy.bind(('', int(proxyPort)))
-except:
-    sys.stderr.write('Failed to bind on port %s\n' % str(proxyPort))
-    sys.exit(1)
-
-sys.stdout.write('Ready.\n')
-
-serveraddr = (serverHost, int(serverPort))
-allsockets = [proxy]
-
-proxysocks = dict()
-origins = dict()
-
-fd = open('file.pcap', mode='wb')
-pcap_write_global_header(fd)
-
-while True:
-    try:
-        rr, _rw, _re = select.select(allsockets, [], [])
-    except:
-        pass
+def add_dtg(filename, timestamp, dest, src, _dtg):
+    if os.path.isfile(PCAP_FILE):
+        fd = open(PCAP_FILE, mode='ab')
     else:
-        for s in rr:
-            data, remoteaddr = s.recvfrom(32768)  # data, (remoteHost, remotePort)
-            localaddr = s.getsockname()  # (localHost, localPort)
+        fd = open(PCAP_FILE, mode='wb')
+        pcap_write_global_header(fd)
+    pcap_write_entry(fd, timestamp, dest, src, _dtg)
+    fd.close()
 
-            # pcap_write_entry(fd, datetime.datetime.now(), localaddr, remoteaddr, data)
 
-            # client -> ( proxy --> ) server
-            if s == proxy:
-                # sys.stdout.write("client %s -> proxy --> server: %s\n" % (remoteaddr, data))
-                try:
-                    # find proxy sock
-                    p = proxysocks[remoteaddr]
+def proxy(proxyPort, serverHost, serverPort):
 
-                except KeyError:
-                    # new client connection
-                    proxysocks[remoteaddr] = p = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    p.connect(serveraddr)
+    proxy = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-                    # keep local address of new socket
-                    proxyaddr = p.getsockname()
-                    origins[proxyaddr] = remoteaddr
+    try:
+        proxy.bind(('', int(proxyPort)))
+    except:
+        sys.stderr.write('Failed to bind on port %s\n' % str(proxyPort))
+        sys.exit(1)
 
-                    # make it "selectable"
-                    allsockets.append(p)
+    sys.stdout.write('Ready.\n')
 
-                p.send(data)
-                # pcap_write_entry(fd, datetime.datetime.now(), serveraddr, p.getsockname(), data)
-                pcap_write_entry(fd, datetime.datetime.now(), serveraddr, remoteaddr, data)
+    serveraddr = (serverHost, int(serverPort))
+    allsockets = [proxy]
 
-            # server -> ( proxy --> ) client
-            else:
-                bytes_sent = proxy.sendto(data, origins[localaddr])
-                # pcap_write_entry(fd, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
-                pcap_write_entry(fd, datetime.datetime.now(), origins[localaddr], serveraddr, data)
-                # sys.stdout.write("server -> proxy --> client %s: %s\n" % (origins[localaddr], data[:bytes_sent]))
+    proxysocks = dict()
+    origins = dict()
+
+    while True:
+        try:
+            rr, _rw, _re = select.select(allsockets, [], [])
+        except:
+            raise
+        else:
+            for s in rr:
+                data, remoteaddr = s.recvfrom(32768)  # data, (remoteHost, remotePort)
+                localaddr = s.getsockname()  # (localHost, localPort)
+
+                # add_dtg(PCAP_FILE, datetime.datetime.now(), localaddr, remoteaddr, data)
+
+                # client -> ( proxy --> ) server
+                if s == proxy:
+                    # sys.stdout.write("client %s -> proxy --> server: %s\n" % (remoteaddr, data))
+                    try:
+                        # find proxy sock
+                        p = proxysocks[remoteaddr]
+
+                    except KeyError:
+                        # new client connection
+                        proxysocks[remoteaddr] = p = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        p.connect(serveraddr)
+
+                        # keep local address of new socket
+                        proxyaddr = p.getsockname()
+                        origins[proxyaddr] = remoteaddr
+
+                        # make it "selectable"
+                        allsockets.append(p)
+
+                    p.send(data)
+                    # add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, p.getsockname(), data)
+                    add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, remoteaddr, data)
+
+                # server -> ( proxy --> ) client
+                else:
+                    bytes_sent = proxy.sendto(data, origins[localaddr])
+                    # add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
+                    add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], serveraddr, data)
+                    # sys.stdout.write("server -> proxy --> client %s: %s\n" % (origins[localaddr], data[:bytes_sent]))
+
+
+def proxy_loop(pp, sh, sp):
+    while True:
+        try:
+            proxy(pp, sh, sp)
+        except Exception as e:
+            raise
+
+if __name__ == '__main__':
+    try:
+        proxyPort, serverHost, serverPort = sys.argv[1].split(':')
+    except:
+        proxyPort, serverHost, serverPort = 4710, '127.0.0.1', 4711
+
+    proxy_loop(proxyPort, serverHost, serverPort)
