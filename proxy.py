@@ -7,7 +7,10 @@ import datetime
 import struct
 import time
 import os
+import threading
+from logging import getLogger
 
+_logger = getLogger(__name__)
 PCAP_FILE = 'file.pcap'
 
 
@@ -59,74 +62,102 @@ def pcap_write_entry(_fd, timestamp, dest, src, _dtg):
 
 
 def add_dtg(filename, timestamp, dest, src, _dtg):
-    if os.path.isfile(PCAP_FILE):
-        fd = open(PCAP_FILE, mode='ab')
+    if os.path.isfile(filename):
+        fd = open(filename, mode='ab')
     else:
-        fd = open(PCAP_FILE, mode='wb')
+        fd = open(filename, mode='wb')
         pcap_write_global_header(fd)
     pcap_write_entry(fd, timestamp, dest, src, _dtg)
     fd.close()
 
 
-def proxy(proxyPort, serverHost, serverPort):
+def proxy_init(proxyPort, serverHost, serverPort):
 
     proxy = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     try:
-        proxy.bind(('', int(proxyPort)))
+        proxy.bind(('localhost', int(proxyPort)))
     except:
         sys.stderr.write('### Failed to bind on port %s\n' % str(proxyPort))
         sys.exit(1)
 
-    sys.stdout.write('### Ready.\n')
+    _logger.debug('### Ready.\n')
 
     serveraddr = (serverHost, int(serverPort))
+
+    return proxy, serveraddr
+
+
+def proxy_run(proxy, serveraddr, runFlag):
+
     allsockets = [proxy]
 
     proxysocks = dict()
     origins = dict()
 
-    while True:
-        try:
-            rr, _rw, _re = select.select(allsockets, [], [])
-        except:
-            raise
-        else:
-            for s in rr:
-                data, remoteaddr = s.recvfrom(32768)  # data, (remoteHost, remotePort)
-                localaddr = s.getsockname()  # (localHost, localPort)
+    try:
+        while runFlag.isSet():
+            try:
+                rr, _rw, _re = select.select(allsockets, [], [], 0.01)
+            except socket.timeout:
+                pass
+            except:
+                raise
+            else:
+                for s in rr:
+                    data, remoteaddr = s.recvfrom(32768)  # data, (remoteHost, remotePort)
+                    localaddr = s.getsockname()  # (localHost, localPort)
 
-                # add_dtg(PCAP_FILE, datetime.datetime.now(), localaddr, remoteaddr, data)
+                    # add_dtg(PCAP_FILE, datetime.datetime.now(), localaddr, remoteaddr, data)
 
-                # client -> ( proxy --> ) server
-                if s == proxy:
-                    sys.stdout.write("    client %s -> proxy --> server: %r\n" % (remoteaddr, str(data)[:20]))
-                    try:
-                        # find proxy sock
-                        p = proxysocks[remoteaddr]
+                    # client -> ( proxy --> ) server
+                    if s == proxy:
+                        _logger.debug("    client %s -> proxy --> server: %r\n" % (remoteaddr, str(data)[:20]))
+                        try:
+                            # find proxy sock
+                            p = proxysocks[remoteaddr]
 
-                    except KeyError:
-                        # new client connection
-                        proxysocks[remoteaddr] = p = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        p.connect(serveraddr)
+                        except KeyError:
+                            # new client connection
+                            proxysocks[remoteaddr] = p = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            p.connect(serveraddr)
 
-                        # keep local address of new socket
-                        proxyaddr = p.getsockname()
-                        origins[proxyaddr] = remoteaddr
+                            # keep local address of new socket
+                            proxyaddr = p.getsockname()
+                            origins[proxyaddr] = remoteaddr
 
-                        # make it "selectable"
-                        allsockets.append(p)
+                            # make it "selectable"
+                            allsockets.append(p)
 
-                    p.send(data)
-                    # add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, p.getsockname(), data)
-                    add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, remoteaddr, data)
+                        p.send(data)
+                        # add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, p.getsockname(), data)
+                        add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, remoteaddr, data)
 
-                # server -> ( proxy --> ) client
-                else:
-                    bytes_sent = proxy.sendto(data, origins[localaddr])
-                    # add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
-                    add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], serveraddr, data)
-                    sys.stdout.write("    server -> proxy --> client %s: %r\n" % (origins[localaddr], str(data[:bytes_sent])[:20]))
+                    # server -> ( proxy --> ) client
+                    else:
+                        bytes_sent = proxy.sendto(data, origins[localaddr])
+                        # add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
+                        add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], serveraddr, data)
+                        _logger.debug("    server -> proxy --> client %s: %r\n" % (origins[localaddr], str(data[:bytes_sent])[:20]))
+
+    except Exception as e:
+        _logger.exception(e)
+    _logger.debug("Exiting pcap proxy loop")
+
+
+def proxy_thread(pp, sh, sp):
+    s, addr = proxy_init(pp, sh, sp)
+    runFlag = threading.Event()
+    runFlag.set()
+    pt = threading.Thread(target=proxy_run, name='PcapProxy', args=(s, addr, runFlag))
+    pt.start()
+    return s.getsockname(), runFlag
+
+
+def proxy(proxyPort, serverHost, serverPort):
+    runFlag = threading.Event().set()
+    proxy, serveraddr = proxy_init(proxyPort, serverHost, serverPort)
+    proxy_run(proxy, serveraddr, runFlag)
 
 
 def proxy_loop(pp, sh, sp):
@@ -134,7 +165,8 @@ def proxy_loop(pp, sh, sp):
         try:
             proxy(pp, sh, sp)
         except Exception as e:
-            sys.stdout.write('### Restarting.\n')
+            _logger.debug('### Restarting.\n')
+
 
 if __name__ == '__main__':
     try:
