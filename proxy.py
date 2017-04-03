@@ -1,5 +1,6 @@
 # -*- encoding: utf-8 -*-
 
+import random
 import select
 import socket
 import sys
@@ -78,17 +79,17 @@ def proxy_init(proxyPort, serverHost, serverPort):
     try:
         proxy.bind(('localhost', int(proxyPort)))
     except:
-        sys.stderr.write('### Failed to bind on port %s\n' % str(proxyPort))
+        _logger.debug('### Failed to bind on port %s' % str(proxyPort))
         sys.exit(1)
 
-    _logger.debug('### Ready.\n')
+    _logger.debug('### Ready.')
 
     serveraddr = (serverHost, int(serverPort))
 
     return proxy, serveraddr
 
 
-def proxy_run(proxy, serveraddr, runFlag):
+def proxy_run(proxy, serveraddr, runFlag, bSimUdpLoss=False):
 
     allsockets = [proxy]
 
@@ -112,7 +113,6 @@ def proxy_run(proxy, serveraddr, runFlag):
 
                     # client -> ( proxy --> ) server
                     if s == proxy:
-                        _logger.debug("    client %s -> proxy --> server: %r\n" % (remoteaddr, str(data)[:20]))
                         try:
                             # find proxy sock
                             p = proxysocks[remoteaddr]
@@ -129,27 +129,34 @@ def proxy_run(proxy, serveraddr, runFlag):
                             # make it "selectable"
                             allsockets.append(p)
 
-                        p.send(data)
-                        # add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, p.getsockname(), data)
-                        add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, remoteaddr, data)
+                        if not bSimUdpLoss or random.randint(0, 8) > 0:
+                            _logger.debug("     client %s -> proxy --> server: %r" % (remoteaddr, str(data)[:20]))
+                            p.send(data)
+                            # add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, p.getsockname(), data)
+                            add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, remoteaddr, data)
+                        else:
+                            _logger.debug("drop client %s -> proxy --> server: %r" % (remoteaddr, str(data)[:20]))
 
                     # server -> ( proxy --> ) client
                     else:
-                        bytes_sent = proxy.sendto(data, origins[localaddr])
-                        # add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
-                        add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], serveraddr, data)
-                        _logger.debug("    server -> proxy --> client %s: %r\n" % (origins[localaddr], str(data[:bytes_sent])[:20]))
+                        if not bSimUdpLoss or random.randint(0, 8) > 0:
+                            bytes_sent = proxy.sendto(data, origins[localaddr])
+                            # add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], proxy.getsockname(), data)
+                            add_dtg(PCAP_FILE, datetime.datetime.now(), origins[localaddr], serveraddr, data)
+                            _logger.debug("     server -> proxy --> client %s: %r" % (origins[localaddr], str(data[:bytes_sent])[:20]))
+                        else:
+                            _logger.debug("drop server -> proxy --> client %s: %r" % (origins[localaddr], str(data)[:20]))
 
     except Exception as e:
         _logger.exception(e)
     _logger.debug("Exiting pcap proxy loop")
 
 
-def proxy_thread(pp, sh, sp):
+def proxy_thread(pp, sh, sp, bSimUdpLoss=False):
     s, addr = proxy_init(pp, sh, sp)
     runFlag = threading.Event()
     runFlag.set()
-    pt = threading.Thread(target=proxy_run, name='PcapProxy', args=(s, addr, runFlag))
+    pt = threading.Thread(target=proxy_run, name='PcapProxy', args=(s, addr, runFlag, bSimUdpLoss))
     pt.start()
     return s.getsockname(), runFlag
 
@@ -165,7 +172,7 @@ def proxy_loop(pp, sh, sp):
         try:
             proxy(pp, sh, sp)
         except Exception as e:
-            _logger.debug('### Restarting.\n')
+            _logger.debug('### Restarting.')
 
 
 if __name__ == '__main__':
