@@ -77,7 +77,7 @@ def proxy_init(proxyPort, serverHost, serverPort):
     proxy = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     try:
-        proxy.bind(('localhost', int(proxyPort)))
+        proxy.bind(('0.0.0.0', int(proxyPort)))
     except:
         _logger.debug('### Failed to bind on port %s' % str(proxyPort))
         sys.exit(1)
@@ -130,7 +130,7 @@ def proxy_run(proxy, serveraddr, runFlag, bSimUdpLoss=False):
                             allsockets.append(p)
 
                         if not bSimUdpLoss or random.randint(0, 8) > 0:
-                            _logger.debug("     client %s -> proxy --> server: %r" % (remoteaddr, str(data)[:20]))
+                            _logger.debug("     client %s -> proxy --> server %s: %r" % (remoteaddr, serveraddr, str(data)[:20]))
                             p.send(data)
                             # add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, p.getsockname(), data)
                             add_dtg(PCAP_FILE, datetime.datetime.now(), serveraddr, remoteaddr, data)
@@ -162,8 +162,9 @@ def proxy_thread(pp, sh, sp, bSimUdpLoss=False):
 
 
 def proxy(proxyPort, serverHost, serverPort):
-    runFlag = threading.Event().set()
     proxy, serveraddr = proxy_init(proxyPort, serverHost, serverPort)
+    runFlag = threading.Event()
+    runFlag.set()
     proxy_run(proxy, serveraddr, runFlag)
 
 
