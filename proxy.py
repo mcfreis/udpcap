@@ -161,25 +161,25 @@ def proxy_thread(pp, sh, sp, bSimUdpLoss=False):
     return s.getsockname(), runFlag
 
 
-def proxy(proxyPort, serverHost, serverPort):
+def proxy(proxyPort, serverHost, serverPort, bSimUdpLoss=False):
     proxy, serveraddr = proxy_init(proxyPort, serverHost, serverPort)
     runFlag = threading.Event()
     runFlag.set()
-    proxy_run(proxy, serveraddr, runFlag)
+    proxy_run(proxy, serveraddr, runFlag, bSimUdpLoss=bSimUdpLoss)
 
 
-def proxy_loop(pp, sh, sp):
+def proxy_loop(pp, sh, sp, bSimUdpLoss=False):
     while True:
         try:
-            proxy(pp, sh, sp)
+            proxy(pp, sh, sp, bSimUdpLoss=bSimUdpLoss)
         except Exception as e:
             _logger.debug('### Restarting.')
 
 
 if __name__ == '__main__':
     try:
-        proxyPort, serverHost, serverPort = sys.argv[1].split(':')
+        proxyPort, serverHost, serverPort, bSimUdpLoss = sys.argv[1].split(':')
     except:
-        proxyPort, serverHost, serverPort = 4710, '127.0.0.1', 4711
+        proxyPort, serverHost, serverPort, bSimUdpLoss = 4710, '127.0.0.1', 4711, False
 
-    proxy_loop(proxyPort, serverHost, serverPort)
+    proxy_loop(proxyPort, serverHost, serverPort, bSimUdpLoss=eval(bSimUdpLoss))
